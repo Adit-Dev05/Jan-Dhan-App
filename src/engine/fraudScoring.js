@@ -83,7 +83,7 @@ export function computeRegionStats(transactions) {
 
 export function getGlobalRiskScore(transactions) {
     if (transactions.length === 0) return 0;
-    const rejected = transactions.filter(t => !t.approved).length;
+    const rejected = transactions.filter(t => t.status === 'REJECTED').length;
     // weighted score
     return Math.round((rejected / transactions.length) * 100);
 }

@@ -63,10 +63,14 @@ export default function Dashboard() {
                     {/* Quick Stats */}
                     <div className="glass-card p-5">
                         <h3 className="text-sm font-bold text-text-heading mb-4">System Overview</h3>
-                        <div className="grid grid-cols-3 gap-4">
+                        <div className="grid grid-cols-4 gap-4">
                             <div className="text-center p-4 rounded-lg bg-bg-primary/50 border border-border-card/50">
                                 <p className="text-2xl font-black text-accent-green">{stats.approved}</p>
                                 <p className="text-[10px] text-text-muted uppercase tracking-wider mt-1">Approved</p>
+                            </div>
+                            <div className="text-center p-4 rounded-lg bg-bg-primary/50 border border-border-card/50">
+                                <p className="text-2xl font-black text-accent-amber">{stats.pending}</p>
+                                <p className="text-[10px] text-text-muted uppercase tracking-wider mt-1">Pending</p>
                             </div>
                             <div className="text-center p-4 rounded-lg bg-bg-primary/50 border border-border-card/50">
                                 <p className="text-2xl font-black text-accent-red">{stats.rejected}</p>

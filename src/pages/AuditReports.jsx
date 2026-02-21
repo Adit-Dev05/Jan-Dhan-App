@@ -1,7 +1,59 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useApp } from '../context/AppContext';
 import { stepByStepVerify } from '../engine/ledgerManager';
-import { Download, ShieldCheck, ShieldAlert, AlertTriangle, RefreshCw, FileWarning, CheckCircle2, XCircle, Play, RotateCcw, Zap, Hash, Trash2 } from 'lucide-react';
+import { sha256Sync } from '../engine/hashUtils';
+import { Download, ShieldCheck, ShieldAlert, AlertTriangle, RefreshCw, FileWarning, CheckCircle2, XCircle, Play, RotateCcw, Zap, Hash, Trash2, FlaskConical, Copy, Check } from 'lucide-react';
+
+function HashVerifierPanel() {
+    const [input, setInput] = useState('');
+    const [result, setResult] = useState('');
+    const [copied, setCopied] = useState(false);
+
+    useEffect(() => {
+        setResult(sha256Sync(input));
+    }, [input]);
+
+    const copyHash = () => {
+        navigator.clipboard.writeText(result);
+        setCopied(true);
+        setTimeout(() => setCopied(false), 2000);
+    };
+
+    return (
+        <div className="glass-card p-5 mt-6 border border-accent-teal/20">
+            <div className="flex items-center gap-2 mb-4">
+                <FlaskConical size={20} className="text-accent-teal" />
+                <div>
+                    <h3 className="text-sm font-bold text-text-heading">SHA-256 Live Verifier</h3>
+                    <p className="text-[10px] text-text-muted">Real SHA-256 (js-sha256) — type any string to compute its hash live</p>
+                </div>
+            </div>
+
+            <div className="mb-4">
+                <label className="block text-[10px] text-text-muted uppercase tracking-wider font-semibold mb-2">Input String</label>
+                <input
+                    type="text"
+                    className="input-field font-mono text-sm"
+                    value={input}
+                    onChange={e => setInput(e.target.value)}
+                    placeholder="Type anything to hash..."
+                />
+            </div>
+
+            <div>
+                <label className="block text-[10px] text-text-muted uppercase tracking-wider font-semibold mb-2">SHA-256 Output (64 hex chars)</label>
+                <div className="flex items-center gap-2">
+                    <div className="flex-1 p-3 rounded-lg bg-bg-primary border border-border-card font-mono text-xs text-accent-teal break-all min-h-[44px]">
+                        {result || <span className="text-text-muted italic">Output appears here...</span>}
+                    </div>
+                    <button onClick={copyHash} disabled={!result} className="p-2 rounded-lg border border-border-card hover:border-accent-teal/40 transition-colors flex-shrink-0 disabled:opacity-40">
+                        {copied ? <Check size={14} className="text-accent-green" /> : <Copy size={14} className="text-text-muted" />}
+                    </button>
+                </div>
+            </div>
+        </div>
+    );
+}
 
 const SCENARIOS = [
     {
@@ -129,10 +181,10 @@ export default function AuditReports() {
                             <div className="w-full h-2 bg-bg-primary rounded-full overflow-hidden">
                                 <div
                                     className={`h-full rounded-full transition-all duration-300 ${scanComplete && scanResults.every(r => r.status === 'VALID')
-                                            ? 'bg-accent-green'
-                                            : scanComplete
-                                                ? 'bg-accent-red'
-                                                : 'bg-accent-teal'
+                                        ? 'bg-accent-green'
+                                        : scanComplete
+                                            ? 'bg-accent-red'
+                                            : 'bg-accent-teal'
                                         }`}
                                     style={{ width: `${scanProgress}%` }}
                                 />
@@ -176,10 +228,10 @@ export default function AuditReports() {
                     <div className="space-y-2">
                         {scanResults.map((r) => (
                             <div key={r.index} className={`flex items-center gap-3 p-3 rounded-lg border transition-all ${r.status === 'VALID'
-                                    ? 'border-accent-green/20 bg-accent-green/5'
-                                    : r.status === 'TAMPERED'
-                                        ? 'border-accent-red/20 bg-accent-red/5'
-                                        : 'border-accent-amber/20 bg-accent-amber/5'
+                                ? 'border-accent-green/20 bg-accent-green/5'
+                                : r.status === 'TAMPERED'
+                                    ? 'border-accent-red/20 bg-accent-red/5'
+                                    : 'border-accent-amber/20 bg-accent-amber/5'
                                 }`}>
                                 <div className={`w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 ${r.status === 'VALID' ? 'bg-accent-green/20' : r.status === 'TAMPERED' ? 'bg-accent-red/20' : 'bg-accent-amber/20'
                                     }`}>
@@ -224,8 +276,8 @@ export default function AuditReports() {
                             key={s.id}
                             onClick={() => setSelectedScenario(s.id)}
                             className={`p-4 rounded-lg border text-left transition-all ${selectedScenario === s.id
-                                    ? `border-${s.color}/40 bg-${s.color}/5 ring-1 ring-${s.color}/20`
-                                    : 'border-border-card hover:border-border-card/80 bg-bg-primary/50'
+                                ? `border-${s.color}/40 bg-${s.color}/5 ring-1 ring-${s.color}/20`
+                                : 'border-border-card hover:border-border-card/80 bg-bg-primary/50'
                                 }`}
                         >
                             <div className="flex items-center gap-2 mb-2">
@@ -288,6 +340,9 @@ export default function AuditReports() {
                     </table>
                 </div>
             </div>
+
+            {/* SHA-256 Live Verifier — below ledger */}
+            <HashVerifierPanel />
         </div>
     );
 }

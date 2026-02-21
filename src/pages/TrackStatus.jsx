@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useApp } from '../context/AppContext';
-import { Search, FileCheck, Clock, CheckCircle2, XCircle, Shield, ArrowRight } from 'lucide-react';
+import { Search, FileCheck, Clock, CheckCircle2, XCircle, Shield, ArrowRight, Hourglass } from 'lucide-react';
 
 export default function TrackStatus() {
     const { getTransaction, truncateHash } = useApp();
@@ -56,23 +56,33 @@ export default function TrackStatus() {
             {result && (
                 <div className="space-y-6 fade-in">
                     {/* Status Card */}
-                    <div className={`glass-card p-6 border-l-4 ${result.approved ? 'border-l-accent-green' : 'border-l-accent-red'}`}>
+                    <div className={`glass-card p-6 border-l-4 ${result.status === 'APPROVED' ? 'border-l-accent-green'
+                            : result.status === 'PENDING' ? 'border-l-accent-amber'
+                                : 'border-l-accent-red'
+                        }`}>
                         <div className="flex items-center justify-between mb-4">
                             <div className="flex items-center gap-3">
-                                {result.approved ? (
+                                {result.status === 'APPROVED' ? (
                                     <CheckCircle2 size={28} className="text-accent-green" />
+                                ) : result.status === 'PENDING' ? (
+                                    <Hourglass size={28} className="text-accent-amber animate-pulse" />
                                 ) : (
                                     <XCircle size={28} className="text-accent-red" />
                                 )}
                                 <div>
                                     <h3 className="text-lg font-bold text-text-heading">
-                                        {result.approved ? 'Claim Approved' : 'Claim Not Approved'}
+                                        {result.status === 'APPROVED' ? 'Claim Approved'
+                                            : result.status === 'PENDING' ? 'Awaiting Admin Approval'
+                                                : 'Claim Rejected'}
                                     </h3>
                                     <p className="text-xs text-text-muted font-mono">{result.id}</p>
                                 </div>
                             </div>
-                            <span className={`badge text-xs ${result.approved ? 'badge-green' : 'badge-red'}`}>
-                                {result.approved ? 'APPROVED' : 'REJECTED'}
+                            <span className={`badge text-xs ${result.status === 'APPROVED' ? 'badge-green'
+                                    : result.status === 'PENDING' ? 'bg-accent-amber/20 text-accent-amber border border-accent-amber/30'
+                                        : 'badge-red'
+                                }`}>
+                                {result.status || (result.approved ? 'APPROVED' : 'REJECTED')}
                             </span>
                         </div>
 
@@ -83,8 +93,8 @@ export default function TrackStatus() {
                             </div>
                             <div>
                                 <p className="text-[10px] text-text-muted uppercase tracking-wider">Amount</p>
-                                <p className="text-sm font-semibold text-accent-green mt-1">
-                                    {result.approved ? `₹${result.amount.toLocaleString('en-IN')}` : '—'}
+                                <p className={`text-sm font-semibold mt-1 ${result.status === 'APPROVED' ? 'text-accent-green' : result.status === 'PENDING' ? 'text-accent-amber' : 'text-text-muted'}`}>
+                                    {result.status === 'APPROVED' ? `₹${result.amount.toLocaleString('en-IN')}` : result.status === 'PENDING' ? `₹${result.amount?.toLocaleString('en-IN')} (pending)` : '—'}
                                 </p>
                             </div>
                             <div>
@@ -92,14 +102,21 @@ export default function TrackStatus() {
                                 <p className="text-sm font-semibold text-text-heading mt-1">{result.regionCode}</p>
                             </div>
                             <div>
-                                <p className="text-[10px] text-text-muted uppercase tracking-wider">Timestamp</p>
+                                <p className="text-[10px] text-text-muted uppercase tracking-wider">Submitted</p>
                                 <p className="text-sm font-semibold text-text-heading mt-1">
                                     {new Date(result.timestamp).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' })}
                                 </p>
                             </div>
                         </div>
 
-                        {!result.approved && result.rejectionReason && (
+                        {result.status === 'PENDING' && (
+                            <div className="mt-4 p-3 rounded-lg bg-accent-amber/5 border border-accent-amber/10">
+                                <p className="text-xs text-accent-amber font-semibold">⏳ Your application has passed all 3 validation gates and is awaiting final admin review.</p>
+                                <p className="text-xs text-text-muted mt-1">Budget will be deducted and the ledger updated only after admin approval. Check back soon.</p>
+                            </div>
+                        )}
+
+                        {result.status === 'REJECTED' && result.rejectionReason && (
                             <div className="mt-4 p-3 rounded-lg bg-accent-red/5 border border-accent-red/10">
                                 <p className="text-xs text-text-muted">
                                     <span className="font-semibold text-accent-red">Reason:</span>{' '}

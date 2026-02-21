@@ -31,6 +31,7 @@ const defaultState = {
     ledgerBackup: null, // for restore after tamper demo
     processedHashes: new Set(),
     transactions: [],
+    pendingRequests: [], // claims awaiting admin approval
     fraudAlerts: [],
     citizenRegistry,
     citizenByHash,
@@ -38,7 +39,7 @@ const defaultState = {
     transactionCounter: 0,
     lastPauseTimestamp: null,
     tamperEvent: null,
-    tamperScenario: null, // description of what was tampered
+    tamperScenario: null,
     otpPending: null,
 };
 
@@ -51,6 +52,7 @@ function serializeState(state) {
         ledgerBackup: state.ledgerBackup,
         processedHashes: [...state.processedHashes],
         transactions: state.transactions,
+        pendingRequests: state.pendingRequests || [],
         fraudAlerts: state.fraudAlerts,
         transactionCounter: state.transactionCounter,
         lastPauseTimestamp: state.lastPauseTimestamp,
@@ -67,6 +69,7 @@ function deserializeState(json) {
             ...defaultState,
             ...parsed,
             processedHashes: new Set(parsed.processedHashes || []),
+            pendingRequests: parsed.pendingRequests || [],
             citizenRegistry,
             citizenByHash,
             citizenById,
@@ -92,6 +95,7 @@ const initialState = loadInitialState();
 
 function appReducer(state, action) {
     switch (action.type) {
+        // Gates FAILED path — instant rejection, no pending queue
         case 'PROCESS_TRANSACTION': {
             const { citizenHash, scheme, validation, transactionId, regionCode, amount } = action.payload;
             const timestamp = new Date().toISOString();
@@ -100,8 +104,9 @@ function appReducer(state, action) {
                 id: transactionId,
                 citizenHash,
                 scheme,
-                amount: validation.approved ? amount : 0,
-                approved: validation.approved,
+                amount: 0,
+                approved: false,
+                status: 'REJECTED',
                 rejectionReason: validation.rejectionReason,
                 gateResults: validation.gateResults,
                 timestamp,
@@ -109,43 +114,131 @@ function appReducer(state, action) {
                 riskScore: 0
             };
 
-            let newLedger = state.ledger;
-            let newBudget = state.budget;
-            let newProcessedHashes = new Set(state.processedHashes);
+            const alerts = [...state.fraudAlerts, {
+                id: `ALERT-${Date.now()}`,
+                citizenHash,
+                transactionId,
+                reason: validation.rejectionReason,
+                timestamp,
+                riskLevel: validation.rejectionReason === 'DUPLICATE_REJECTED' ? 'HIGH' :
+                    validation.rejectionReason === 'FREQUENCY_VIOLATION' ? 'MEDIUM' : 'LOW',
+                regionCode
+            }];
+
+            return {
+                ...state,
+                transactions: [...state.transactions, txn],
+                fraudAlerts: alerts,
+                transactionCounter: state.transactionCounter + 1,
+            };
+        }
+
+        // Gates PASSED path — create a pending request for admin to review
+        case 'SUBMIT_CLAIM': {
+            const { citizenHash, scheme, gateResults, transactionId, regionCode, amount, manualReview, reviewNote } = action.payload;
+            const timestamp = new Date().toISOString();
+
+            // Pending transaction record (shown in TrackStatus)
+            const txn = {
+                id: transactionId,
+                citizenHash,
+                scheme,
+                amount,
+                approved: false,
+                status: 'PENDING',
+                rejectionReason: null,
+                gateResults,
+                timestamp,
+                regionCode,
+                manualReview: !!manualReview,
+                reviewNote: reviewNote || null,
+                riskScore: 0
+            };
+
+            // Pending request for admin queue
+            const pendingReq = {
+                id: transactionId,
+                citizenHash,
+                scheme,
+                amount,
+                regionCode,
+                gateResults,
+                submittedAt: timestamp,
+                status: 'PENDING',
+                manualReview: !!manualReview,
+                reviewNote: reviewNote || null
+            };
+
+            return {
+                ...state,
+                transactions: [...state.transactions, txn],
+                pendingRequests: [...state.pendingRequests, pendingReq],
+                transactionCounter: state.transactionCounter + 1,
+            };
+        }
+
+
+        // Admin approves a pending claim
+        case 'APPROVE_CLAIM': {
+            const { requestId } = action.payload;
+            const req = state.pendingRequests.find(r => r.id === requestId);
+            if (!req) return state;
+
+            const newLedger = appendToLedger(state.ledger, req.citizenHash, req.scheme, req.amount);
+            let newBudget = state.budget - req.amount;
             let newSystemStatus = state.systemStatus;
-            let alerts = [...state.fraudAlerts];
+            const newProcessedHashes = new Set(state.processedHashes);
+            newProcessedHashes.add(req.citizenHash);
 
-            if (validation.approved) {
-                newLedger = appendToLedger(state.ledger, citizenHash, scheme, amount);
-                newBudget = state.budget - amount;
-                newProcessedHashes.add(citizenHash);
-
-                if (newBudget <= 0) {
-                    newSystemStatus = 'BUDGET_EXHAUSTED';
-                    newBudget = 0;
-                }
-            } else {
-                alerts.push({
-                    id: `ALERT-${Date.now()}`,
-                    citizenHash,
-                    transactionId,
-                    reason: validation.rejectionReason,
-                    timestamp,
-                    riskLevel: validation.rejectionReason === 'DUPLICATE_REJECTED' ? 'HIGH' :
-                        validation.rejectionReason === 'FREQUENCY_VIOLATION' ? 'MEDIUM' : 'LOW',
-                    regionCode
-                });
+            if (newBudget <= 0) {
+                newSystemStatus = 'BUDGET_EXHAUSTED';
+                newBudget = 0;
             }
+
+            const updatedTransactions = state.transactions.map(t =>
+                t.id === requestId
+                    ? { ...t, approved: true, status: 'APPROVED', approvedAt: new Date().toISOString() }
+                    : t
+            );
 
             return {
                 ...state,
                 ledger: newLedger,
                 budget: newBudget,
                 processedHashes: newProcessedHashes,
-                transactions: [...state.transactions, txn],
-                fraudAlerts: alerts,
-                transactionCounter: state.transactionCounter + 1,
+                transactions: updatedTransactions,
+                pendingRequests: state.pendingRequests.filter(r => r.id !== requestId),
                 systemStatus: newSystemStatus
+            };
+        }
+
+        // Admin rejects a pending claim
+        case 'REJECT_CLAIM': {
+            const { requestId, reason } = action.payload;
+            const req = state.pendingRequests.find(r => r.id === requestId);
+            if (!req) return state;
+
+            const updatedTransactions = state.transactions.map(t =>
+                t.id === requestId
+                    ? { ...t, approved: false, status: 'REJECTED', rejectionReason: reason || 'ADMIN_REJECTED', rejectedAt: new Date().toISOString() }
+                    : t
+            );
+
+            const alerts = [...state.fraudAlerts, {
+                id: `ALERT-${Date.now()}`,
+                citizenHash: req.citizenHash,
+                transactionId: requestId,
+                reason: reason || 'ADMIN_REJECTED',
+                timestamp: new Date().toISOString(),
+                riskLevel: 'LOW',
+                regionCode: req.regionCode
+            }];
+
+            return {
+                ...state,
+                transactions: updatedTransactions,
+                pendingRequests: state.pendingRequests.filter(r => r.id !== requestId),
+                fraudAlerts: alerts
             };
         }
 
@@ -360,7 +453,7 @@ export function AppProvider({ children }) {
 
         const citizenHash = hashCitizenId(citizenId);
 
-        // Check duplicate
+        // Check duplicate — instant rejection, skip pending queue
         if (checkDuplicate(citizenHash, state.processedHashes)) {
             const txnId = `TXN-${String(state.transactionCounter + 1).padStart(5, '0')}-JDG`;
             dispatch({
@@ -368,13 +461,13 @@ export function AppProvider({ children }) {
                 payload: {
                     citizenHash,
                     scheme: requestedScheme,
-                    validation: { approved: false, rejectionReason: 'DUPLICATE_REJECTED', gateResults: [], amount: 0 },
+                    validation: { approved: false, rejectionReason: 'DUPLICATE_REJECTED', gateResults: [] },
                     transactionId: txnId,
                     regionCode: 'N/A',
                     amount: 0
                 }
             });
-            return { success: true, approved: false, reason: 'DUPLICATE_REJECTED', transactionId: txnId };
+            return { success: true, status: 'REJECTED', reason: 'DUPLICATE_REJECTED', transactionId: txnId };
         }
 
         // Find citizen — first try raw ID, then fall back to hash lookup
@@ -387,16 +480,15 @@ export function AppProvider({ children }) {
                 payload: {
                     citizenHash,
                     scheme: requestedScheme,
-                    validation: { approved: false, rejectionReason: 'CITIZEN_NOT_FOUND', gateResults: [], amount: 0 },
+                    validation: { approved: false, rejectionReason: 'CITIZEN_NOT_FOUND', gateResults: [] },
                     transactionId: txnId,
                     regionCode: 'N/A',
                     amount: 0
                 }
             });
-            return { success: true, approved: false, reason: 'CITIZEN_NOT_FOUND', transactionId: txnId };
+            return { success: true, status: 'REJECTED', reason: 'CITIZEN_NOT_FOUND', transactionId: txnId };
         }
 
-        // Use the citizen's actual hash for consistency
         const actualHash = citizen.hash;
 
         // Check duplicate with actual hash too
@@ -407,13 +499,13 @@ export function AppProvider({ children }) {
                 payload: {
                     citizenHash: actualHash,
                     scheme: requestedScheme,
-                    validation: { approved: false, rejectionReason: 'DUPLICATE_REJECTED', gateResults: [], amount: 0 },
+                    validation: { approved: false, rejectionReason: 'DUPLICATE_REJECTED', gateResults: [] },
                     transactionId: txnId,
                     regionCode: citizen.Region_Code,
                     amount: 0
                 }
             });
-            return { success: true, approved: false, reason: 'DUPLICATE_REJECTED', transactionId: txnId };
+            return { success: true, status: 'REJECTED', reason: 'DUPLICATE_REJECTED', transactionId: txnId };
         }
 
         // 2FA check for high-value transactions
@@ -422,31 +514,63 @@ export function AppProvider({ children }) {
             return { success: true, needs2FA: true, otp: '123456' };
         }
 
-        // Run validation engine
+        // Run gate validation
         const validation = validateTransaction(citizen, requestedScheme, { budget: state.budget });
         const txnId = `TXN-${String(state.transactionCounter + 1).padStart(5, '0')}-JDG`;
 
+        if (!validation.approved && !validation.manualReview) {
+            // Gates failed with no path to review — instant rejection
+            dispatch({
+                type: 'PROCESS_TRANSACTION',
+                payload: {
+                    citizenHash: actualHash,
+                    scheme: requestedScheme,
+                    validation,
+                    transactionId: txnId,
+                    regionCode: citizen.Region_Code,
+                    amount: 0
+                }
+            });
+            if (state.otpPending) dispatch({ type: 'CLEAR_OTP' });
+            return { success: true, status: 'REJECTED', reason: validation.rejectionReason, transactionId: txnId, gateResults: validation.gateResults };
+        }
+
+        // Gates passed (or manualReview) — submit for admin approval (PENDING)
         dispatch({
-            type: 'PROCESS_TRANSACTION',
+            type: 'SUBMIT_CLAIM',
             payload: {
                 citizenHash: actualHash,
                 scheme: requestedScheme,
-                validation,
+                gateResults: validation.gateResults,
                 transactionId: txnId,
                 regionCode: citizen.Region_Code,
-                amount: citizen.Scheme_Amount
+                amount: citizen.Scheme_Amount,
+                manualReview: !!validation.manualReview,
+                reviewNote: validation.manualReview ? 'CLAIM_LIMIT_MANUAL_REVIEW' : null
             }
         });
 
-        // Verify chain integrity after every transaction
-        setTimeout(() => dispatch({ type: 'VERIFY_CHAIN' }), 100);
+        if (state.otpPending) dispatch({ type: 'CLEAR_OTP' });
 
-        if (state.otpPending) {
-            dispatch({ type: 'CLEAR_OTP' });
-        }
-
-        return { success: true, approved: validation.approved, reason: validation.rejectionReason, transactionId: txnId, gateResults: validation.gateResults };
+        return {
+            success: true,
+            status: 'PENDING',
+            manualReview: !!validation.manualReview,
+            transactionId: txnId,
+            gateResults: validation.gateResults
+        };
     }, [state]);
+
+    // Admin approves a pending request → budget deducted + ledger written
+    const approveRequest = useCallback((requestId) => {
+        dispatch({ type: 'APPROVE_CLAIM', payload: { requestId } });
+        setTimeout(() => dispatch({ type: 'VERIFY_CHAIN' }), 100);
+    }, [dispatch]);
+
+    // Admin rejects a pending request
+    const rejectRequest = useCallback((requestId, reason) => {
+        dispatch({ type: 'REJECT_CLAIM', payload: { requestId, reason } });
+    }, [dispatch]);
 
     const verify2FA = useCallback((otp) => {
         if (state.otpPending && otp === state.otpPending.otp) {
@@ -472,10 +596,11 @@ export function AppProvider({ children }) {
 
     const stats = {
         totalTransactions: state.transactions.length,
-        approved: state.transactions.filter(t => t.approved).length,
-        rejected: state.transactions.filter(t => !t.approved).length,
-        rejectionRate: state.transactions.length > 0
-            ? ((state.transactions.filter(t => !t.approved).length / state.transactions.length) * 100).toFixed(2)
+        pending: (state.pendingRequests || []).length,
+        approved: state.transactions.filter(t => t.status === 'APPROVED').length,
+        rejected: state.transactions.filter(t => t.status === 'REJECTED').length,
+        rejectionRate: state.transactions.filter(t => t.status !== 'PENDING').length > 0
+            ? ((state.transactions.filter(t => t.status === 'REJECTED').length / state.transactions.filter(t => t.status !== 'PENDING').length) * 100).toFixed(2)
             : '0.00',
         budgetUsed: INITIAL_BUDGET - state.budget,
         budgetPercent: ((state.budget / INITIAL_BUDGET) * 100).toFixed(1),
@@ -484,13 +609,13 @@ export function AppProvider({ children }) {
         globalRiskScore: getGlobalRiskScore(state.transactions),
         regionStats: computeRegionStats(state.transactions),
         rejectionReasons: state.transactions
-            .filter(t => !t.approved)
+            .filter(t => t.status === 'REJECTED' && t.rejectionReason)
             .reduce((acc, t) => {
                 acc[t.rejectionReason] = (acc[t.rejectionReason] || 0) + 1;
                 return acc;
             }, {}),
         preventedFraudAmount: state.transactions
-            .filter(t => !t.approved)
+            .filter(t => t.status === 'REJECTED')
             .reduce((acc, t) => {
                 const c = state.citizenByHash[t.citizenHash];
                 return acc + (c ? c.Scheme_Amount : 0);
@@ -502,6 +627,8 @@ export function AppProvider({ children }) {
             ...state,
             stats,
             processTransaction,
+            approveRequest,
+            rejectRequest,
             verify2FA,
             searchCitizens,
             getTransaction,

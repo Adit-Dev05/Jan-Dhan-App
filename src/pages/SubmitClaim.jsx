@@ -14,6 +14,7 @@ export default function SubmitClaim() {
     const [otpInput, setOtpInput] = useState('');
     const [suggestions, setSuggestions] = useState([]);
     const [showSuggestions, setShowSuggestions] = useState(false);
+    const [finalStatus, setFinalStatus] = useState('idle'); // idle | pending | fail | pass
     const suggestRef = useRef(null);
 
     // Get unique schemes from registry
@@ -62,6 +63,7 @@ export default function SubmitClaim() {
         setProcessing(true);
         setResult(null);
         setGateResults([]);
+        setFinalStatus('idle');
 
         await new Promise(resolve => setTimeout(resolve, 800));
 
@@ -75,6 +77,10 @@ export default function SubmitClaim() {
 
         setResult(res);
         if (res.gateResults) setGateResults(res.gateResults);
+        // Set the FINAL node color based on outcome
+        if (res.status === 'PENDING') setFinalStatus('pending');
+        else if (res.status === 'REJECTED') setFinalStatus('fail');
+        else setFinalStatus('idle');
         setProcessing(false);
     };
 
@@ -86,6 +92,9 @@ export default function SubmitClaim() {
                 const res = processTransaction(citizenId, selectedScheme, { skip2FA: true });
                 setResult(res);
                 if (res.gateResults) setGateResults(res.gateResults);
+                if (res.status === 'PENDING') setFinalStatus('pending');
+                else if (res.status === 'REJECTED') setFinalStatus('fail');
+                else setFinalStatus('idle');
             }, 500);
         } else {
             setResult({ success: false, error: 'Invalid OTP. Verification failed.' });
@@ -223,30 +232,35 @@ export default function SubmitClaim() {
 
                         {/* Result Message */}
                         {result && !result.needs2FA && (
-                            <div className={`mt-6 p-5 rounded-lg border ${result.approved
-                                ? 'bg-accent-green/10 border-accent-green/30'
-                                : 'bg-accent-red/10 border-accent-red/30'
+                            <div className={`mt-6 p-5 rounded-lg border ${result.error ? 'bg-accent-red/10 border-accent-red/30'
+                                : result.status === 'PENDING' ? 'bg-accent-amber/10 border-accent-amber/30'
+                                    : result.status === 'REJECTED' ? 'bg-accent-red/10 border-accent-red/30'
+                                        : 'bg-bg-card border-border-card'
                                 }`}>
                                 {result.error ? (
                                     <div className="flex items-center gap-2">
                                         <XCircle size={18} className="text-accent-red" />
                                         <p className="text-sm text-accent-red font-semibold">{result.error}</p>
                                     </div>
-                                ) : result.approved ? (
+                                ) : result.status === 'PENDING' ? (
                                     <div>
-                                        <div className="flex items-center gap-2">
-                                            <CheckCircle2 size={18} className="text-accent-green" />
-                                            <p className="text-sm text-accent-green font-bold">Claim Approved Successfully</p>
+                                        <div className="flex items-center gap-2 mb-2">
+                                            <svg className="w-5 h-5 text-accent-amber animate-pulse" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                                            <p className="text-sm text-accent-amber font-bold">Application Submitted — Pending Admin Review</p>
                                         </div>
-                                        <p className="text-xs text-text-muted mt-2">
-                                            Your benefit will be disbursed shortly. Reference: <span className="font-mono text-accent-teal">{result.transactionId}</span>
+                                        <p className="text-xs text-text-muted mt-1">
+                                            Your application passed all validation gates and has been forwarded to the admin for final approval.
                                         </p>
+                                        <p className="text-xs text-text-muted mt-2">
+                                            Reference ID: <span className="font-mono text-accent-teal font-bold">{result.transactionId}</span>
+                                        </p>
+                                        <p className="text-xs text-text-muted mt-1">Use this ID to track your status under <b>Track Status</b>.</p>
                                     </div>
                                 ) : (
                                     <div>
                                         <div className="flex items-center gap-2">
                                             <XCircle size={18} className="text-accent-red" />
-                                            <p className="text-sm text-accent-red font-bold">Claim Not Approved</p>
+                                            <p className="text-sm text-accent-red font-bold">Claim Rejected</p>
                                         </div>
                                         <p className="text-xs text-text-muted mt-2">
                                             Reason: <span className="font-mono text-accent-red">{result.reason?.replace(/_/g, ' ')}</span>
@@ -261,7 +275,7 @@ export default function SubmitClaim() {
 
                 {/* Right side — Pipeline + Info */}
                 <div className="lg:col-span-2 space-y-6">
-                    <ValidationPipeline gateResults={gateResults} processing={processing} />
+                    <ValidationPipeline gateResults={gateResults} processing={processing} finalStatus={finalStatus} />
 
                     {gateResults.length > 0 && (
                         <div className="glass-card p-5">
@@ -304,13 +318,19 @@ export default function SubmitClaim() {
                                 <div className="w-6 h-6 rounded-full bg-accent-teal/10 flex items-center justify-center flex-shrink-0 mt-0.5">
                                     <span className="text-[10px] font-bold text-accent-teal">2</span>
                                 </div>
-                                <p className="text-xs text-text-secondary">Your application passes through a 3-gate security check</p>
+                                <p className="text-xs text-text-secondary">Your application passes through a 3-gate eligibility, budget &amp; frequency check</p>
                             </div>
                             <div className="flex items-start gap-3">
-                                <div className="w-6 h-6 rounded-full bg-accent-teal/10 flex items-center justify-center flex-shrink-0 mt-0.5">
-                                    <span className="text-[10px] font-bold text-accent-teal">3</span>
+                                <div className="w-6 h-6 rounded-full bg-accent-amber/10 flex items-center justify-center flex-shrink-0 mt-0.5">
+                                    <span className="text-[10px] font-bold text-accent-amber">3</span>
                                 </div>
-                                <p className="text-xs text-text-secondary">If approved, your benefit is recorded on an immutable ledger</p>
+                                <p className="text-xs text-text-secondary">Passed claims are sent to the admin for final review and approval</p>
+                            </div>
+                            <div className="flex items-start gap-3">
+                                <div className="w-6 h-6 rounded-full bg-accent-green/10 flex items-center justify-center flex-shrink-0 mt-0.5">
+                                    <span className="text-[10px] font-bold text-accent-green">4</span>
+                                </div>
+                                <p className="text-xs text-text-secondary">On admin approval, your benefit is recorded on the immutable SHA-256 ledger</p>
                             </div>
                         </div>
                     </div>

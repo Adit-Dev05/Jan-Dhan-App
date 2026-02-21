@@ -41,12 +41,12 @@ export function validateTransaction(citizen, requestedScheme, systemState) {
     }
 
     // Check Claim Count
+    let requiresManualReview = false;
     if (citizen.Claim_Count > 3) {
-        gate1Checks.push({ check: 'Claim Count', passed: false, detail: `${citizen.Claim_Count} claims (max 3)` });
-        if (approved) {
-            approved = false;
-            rejectionReason = 'CLAIM_LIMIT_EXCEEDED';
-        }
+        gate1Checks.push({ check: 'Claim Count', passed: false, detail: `${citizen.Claim_Count} claims — Manual Review` });
+        // Don't hard-reject; flag for manual admin review instead
+        requiresManualReview = true;
+        rejectionReason = 'CLAIM_LIMIT_MANUAL_REVIEW';
     } else {
         gate1Checks.push({ check: 'Claim Count', passed: true, detail: `${citizen.Claim_Count}/3` });
     }
@@ -116,7 +116,8 @@ export function validateTransaction(citizen, requestedScheme, systemState) {
     });
 
     return {
-        approved,
+        approved: approved && !requiresManualReview,
+        manualReview: requiresManualReview && approved, // true = passed other gates but needs admin review
         rejectionReason,
         gateResults,
         amount: approved ? amount : 0
