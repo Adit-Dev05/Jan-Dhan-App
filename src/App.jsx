@@ -15,6 +15,8 @@ import Dashboard from './pages/Dashboard';
 import TransactionMonitor from './pages/TransactionMonitor';
 import FraudAnalytics from './pages/FraudAnalytics';
 import AuditReports from './pages/AuditReports';
+import FraudClusters from './pages/FraudClusters';
+import BudgetControl from './pages/BudgetControl';
 
 export default function App() {
   return (
@@ -52,6 +54,16 @@ export default function App() {
           <Route path="/admin/audit" element={
             <AdminLayout>
               <AuditReports />
+            </AdminLayout>
+          } />
+          <Route path="/admin/clusters" element={
+            <AdminLayout>
+              <FraudClusters />
+            </AdminLayout>
+          } />
+          <Route path="/admin/budget" element={
+            <AdminLayout>
+              <BudgetControl />
             </AdminLayout>
           } />
         </Routes>

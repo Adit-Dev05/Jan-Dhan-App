@@ -12,6 +12,28 @@ export function sha256Sync(message) {
 }
 
 /**
+ * Normalize a citizen ID for cross-region duplicate detection.
+ * Removes: leading/trailing whitespace, internal spaces, hyphens,
+ * zero-width characters (U+200B–U+200D, U+FEFF), and converts to uppercase.
+ * This ensures that slight formatting differences don't mask duplicate identities.
+ */
+export function normalizeCitizenId(id) {
+    return String(id)
+        .replace(/[\u200B-\u200D\uFEFF]/g, '') // zero-width chars
+        .replace(/[\s\-\.]/g, '')               // whitespace, hyphens, dots
+        .toUpperCase()
+        .trim();
+}
+
+/**
+ * Hash a normalized citizen ID — used for cross-region ring detection.
+ * Two IDs that differ only in formatting will produce the same hash.
+ */
+export function hashNormalized(id) {
+    return sha256Sync(normalizeCitizenId(id));
+}
+
+/**
  * Async SHA-256 using Web Crypto API (available for external use if needed).
  */
 export async function sha256Async(message) {

@@ -4,6 +4,8 @@ import { hashCitizenId, truncateHash } from '../engine/hashUtils';
 import { validateTransaction, checkDuplicate } from '../engine/validationEngine';
 import { createGenesisBlock, appendToLedger, verifyLedgerChain, tamperLedgerEntry, exportLedgerCSV } from '../engine/ledgerManager';
 import { computeFraudScore, getRiskLevel, computeRegionStats, getGlobalRiskScore } from '../engine/fraudScoring';
+import { buildClusterMap, detectCrossRegionRings, exportClusterReportCSV } from '../engine/identityClusterEngine';
+import { applyBudgetReduction, reprioritizePendingQueue } from '../engine/budgetAllocationEngine';
 
 // Pre-hash all citizen IDs and build lookups
 const citizenRegistry = registryData.map(citizen => ({
@@ -41,6 +43,11 @@ const defaultState = {
     tamperEvent: null,
     tamperScenario: null,
     otpPending: null,
+    // Feature 1: Cross-Region Identity Clusters
+    fraudClusters: [],
+    frozenHashes: new Set(), // citizen hashes frozen by admin via cluster freeze
+    // Feature 2: Budget Reallocation
+    budgetReductionLog: [], // history of mid-cycle budget cuts
 };
 
 // Serialize state for localStorage (exclude non-serializable fields)
@@ -58,6 +65,9 @@ function serializeState(state) {
         lastPauseTimestamp: state.lastPauseTimestamp,
         tamperEvent: state.tamperEvent,
         tamperScenario: state.tamperScenario,
+        fraudClusters: state.fraudClusters || [],
+        frozenHashes: [...(state.frozenHashes || new Set())],
+        budgetReductionLog: state.budgetReductionLog || [],
     });
 }
 
@@ -70,6 +80,9 @@ function deserializeState(json) {
             ...parsed,
             processedHashes: new Set(parsed.processedHashes || []),
             pendingRequests: parsed.pendingRequests || [],
+            fraudClusters: parsed.fraudClusters || [],
+            frozenHashes: new Set(parsed.frozenHashes || []),
+            budgetReductionLog: parsed.budgetReductionLog || [],
             citizenRegistry,
             citizenByHash,
             citizenById,
@@ -407,10 +420,108 @@ function appReducer(state, action) {
             };
         }
 
+        // ---- Feature 1: Cross-Region Identity Cluster Actions ----
+
+        case 'DETECT_CLUSTERS': {
+            const clusterMap = buildClusterMap(state.citizenRegistry);
+            const clusters = detectCrossRegionRings(clusterMap);
+            return { ...state, fraudClusters: clusters };
+        }
+
+        case 'FREEZE_CLUSTER': {
+            const { clusterId } = action.payload;
+            const cluster = state.fraudClusters.find(c => c.clusterId === clusterId);
+            if (!cluster) return state;
+
+            const newFrozen = new Set(state.frozenHashes);
+            const newAlerts = [...state.fraudAlerts];
+            cluster.members.forEach(m => {
+                newFrozen.add(m.citizenHash);
+                newAlerts.push({
+                    id: `ALERT-CLUSTER-${clusterId}-${m.citizenHash.slice(0, 8)}`,
+                    citizenHash: m.citizenHash,
+                    transactionId: `CLUSTER-${clusterId}`,
+                    reason: 'CROSS_REGION_IDENTITY_RING',
+                    timestamp: new Date().toISOString(),
+                    riskLevel: 'HIGH',
+                    regionCode: m.regionCode,
+                });
+            });
+            const updatedClusters = state.fraudClusters.map(c =>
+                c.clusterId === clusterId ? { ...c, frozen: true, frozenAt: new Date().toISOString() } : c
+            );
+            return { ...state, frozenHashes: newFrozen, fraudAlerts: newAlerts, fraudClusters: updatedClusters };
+        }
+
+        case 'UNFREEZE_CLUSTER': {
+            const { clusterId } = action.payload;
+            const cluster = state.fraudClusters.find(c => c.clusterId === clusterId);
+            if (!cluster) return state;
+
+            const newFrozen = new Set(state.frozenHashes);
+            cluster.members.forEach(m => newFrozen.delete(m.citizenHash));
+            const updatedClusters = state.fraudClusters.map(c =>
+                c.clusterId === clusterId ? { ...c, frozen: false, frozenAt: null } : c
+            );
+            return { ...state, frozenHashes: newFrozen, fraudClusters: updatedClusters };
+        }
+
+        // ---- Feature 2: Dynamic Budget Reallocation ----
+
+        case 'REDUCE_BUDGET': {
+            const { reductionPercent } = action.payload;
+            const { newBudget, cutAmount } = applyBudgetReduction(state.budget, reductionPercent);
+
+            // Re-prioritise pending queue under the new budget
+            const { funded, rejected, sortedQueue } = reprioritizePendingQueue(
+                state.pendingRequests,
+                newBudget,
+                state.citizenByHash
+            );
+
+            // Auto-reject the unfundable pending requests
+            const rejectedIds = new Set(rejected.map(r => r.id));
+            const updatedTransactions = state.transactions.map(t =>
+                rejectedIds.has(t.id)
+                    ? { ...t, status: 'REJECTED', rejectionReason: 'BUDGET_REALLOCATION', rejectedAt: new Date().toISOString() }
+                    : t
+            );
+
+            // Keep only funded requests in pending queue (sorted by priority)
+            const fundedIds = new Set(funded.map(f => f.id));
+            const updatedPending = sortedQueue.filter(r => fundedIds.has(r.id));
+
+            // Log this reduction event
+            const logEntry = {
+                id: `BUDGET-CUT-${Date.now()}`,
+                timestamp: new Date().toISOString(),
+                reductionPercent,
+                budgetBefore: state.budget,
+                budgetAfter: newBudget,
+                cutAmount,
+                claimsFunded: funded.length,
+                claimsRejected: rejected.length,
+                rejectedClaimIds: [...rejectedIds],
+            };
+
+            let newSystemStatus = state.systemStatus;
+            if (newBudget <= 0) newSystemStatus = 'BUDGET_EXHAUSTED';
+
+            return {
+                ...state,
+                budget: newBudget,
+                systemStatus: newSystemStatus,
+                transactions: updatedTransactions,
+                pendingRequests: updatedPending,
+                budgetReductionLog: [...(state.budgetReductionLog || []), logEntry],
+            };
+        }
+
         default:
             return state;
     }
 }
+
 
 const AppContext = createContext(null);
 
@@ -452,6 +563,23 @@ export function AppProvider({ children }) {
         }
 
         const citizenHash = hashCitizenId(citizenId);
+
+        // Check frozen identity — instant rejection, cannot proceed
+        if ((state.frozenHashes || new Set()).has(citizenHash)) {
+            const txnId = `TXN-${String(state.transactionCounter + 1).padStart(5, '0')}-JDG`;
+            dispatch({
+                type: 'PROCESS_TRANSACTION',
+                payload: {
+                    citizenHash,
+                    scheme: requestedScheme,
+                    validation: { approved: false, rejectionReason: 'IDENTITY_FROZEN', gateResults: [] },
+                    transactionId: txnId,
+                    regionCode: 'FROZEN',
+                    amount: 0
+                }
+            });
+            return { success: true, status: 'REJECTED', reason: 'IDENTITY_FROZEN', transactionId: txnId };
+        }
 
         // Check duplicate — instant rejection, skip pending queue
         if (checkDuplicate(citizenHash, state.processedHashes)) {
@@ -572,6 +700,28 @@ export function AppProvider({ children }) {
         dispatch({ type: 'REJECT_CLAIM', payload: { requestId, reason } });
     }, [dispatch]);
 
+    // Feature 1: Cluster callbacks
+    const detectClusters = useCallback(() => {
+        dispatch({ type: 'DETECT_CLUSTERS' });
+    }, [dispatch]);
+
+    const freezeCluster = useCallback((clusterId) => {
+        dispatch({ type: 'FREEZE_CLUSTER', payload: { clusterId } });
+    }, [dispatch]);
+
+    const unfreezeCluster = useCallback((clusterId) => {
+        dispatch({ type: 'UNFREEZE_CLUSTER', payload: { clusterId } });
+    }, [dispatch]);
+
+    const exportClusterReport = useCallback(() => {
+        return exportClusterReportCSV(state.fraudClusters || []);
+    }, [state.fraudClusters]);
+
+    // Feature 2: Budget reallocation
+    const reduceBudget = useCallback((reductionPercent = 20) => {
+        dispatch({ type: 'REDUCE_BUDGET', payload: { reductionPercent } });
+    }, [dispatch]);
+
     const verify2FA = useCallback((otp) => {
         if (state.otpPending && otp === state.otpPending.otp) {
             dispatch({ type: 'SET_OTP_PENDING', payload: { ...state.otpPending, verified: true } });
@@ -607,6 +757,13 @@ export function AppProvider({ children }) {
         fraudAlertCount: state.fraudAlerts.length,
         criticalAlerts: state.fraudAlerts.filter(a => a.riskLevel === 'HIGH').length,
         globalRiskScore: getGlobalRiskScore(state.transactions),
+        // Feature 1 stats
+        activeClusters: (state.fraudClusters || []).length,
+        frozenCount: (state.frozenHashes || new Set()).size,
+        highRiskClusters: (state.fraudClusters || []).filter(c => c.riskLevel === 'HIGH').length,
+        // Feature 2 stats
+        budgetReductions: (state.budgetReductionLog || []).length,
+        lastBudgetCut: (state.budgetReductionLog || []).slice(-1)[0] || null,
         regionStats: computeRegionStats(state.transactions),
         rejectionReasons: state.transactions
             .filter(t => t.status === 'REJECTED' && t.rejectionReason)
@@ -634,12 +791,20 @@ export function AppProvider({ children }) {
             getTransaction,
             dispatch,
             exportLedger: () => exportLedgerCSV(state.ledger),
-            truncateHash
+            truncateHash,
+            // Feature 1: Cluster management
+            detectClusters,
+            freezeCluster,
+            unfreezeCluster,
+            exportClusterReport,
+            // Feature 2: Budget reallocation
+            reduceBudget,
         }}>
             {children}
         </AppContext.Provider>
     );
 }
+
 
 export function useApp() {
     const context = useContext(AppContext);

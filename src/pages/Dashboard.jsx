@@ -2,7 +2,7 @@ import React from 'react';
 import { useApp } from '../context/AppContext';
 import KPICard from '../components/KPICard';
 import BlockchainLedger from '../components/BlockchainLedger';
-import { Wallet, ArrowLeftRight, XCircle, AlertTriangle, Lock } from 'lucide-react';
+import { Wallet, ArrowLeftRight, XCircle, AlertTriangle, Lock, ScanSearch } from 'lucide-react';
 
 export default function Dashboard() {
     const { stats, budget, systemStatus } = useApp();
@@ -10,7 +10,7 @@ export default function Dashboard() {
     return (
         <div className="fade-in">
             {/* KPI Row */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4 mb-6">
                 <KPICard
                     title="Budget Remaining"
                     value={`₹${(budget / 100000).toFixed(1)} L`}
@@ -54,6 +54,26 @@ export default function Dashboard() {
                         <span className="badge badge-red mt-1 inline-block">{stats.criticalAlerts} Critical</span>
                     )}
                 </KPICard>
+
+                <KPICard
+                    title="Frozen Identities"
+                    value={stats.frozenCount || 0}
+                    icon={Lock}
+                    variant="danger"
+                    trendLabel={stats.frozenCount > 0 ? 'Click to manage' : 'None frozen'}
+                >
+                    {stats.frozenCount > 0 && (
+                        <a href="/admin/clusters" className="badge badge-red mt-1 inline-block cursor-pointer hover:opacity-80">❄ {stats.frozenCount} Frozen</a>
+                    )}
+                </KPICard>
+
+                <KPICard
+                    title="Identity Clusters"
+                    value={stats.activeClusters || 0}
+                    icon={ScanSearch}
+                    variant={stats.highRiskClusters > 0 ? 'warning' : 'neutral'}
+                    trendLabel={stats.highRiskClusters > 0 ? `${stats.highRiskClusters} HIGH risk` : 'No clusters yet'}
+                />
             </div>
 
             {/* Main Content */}

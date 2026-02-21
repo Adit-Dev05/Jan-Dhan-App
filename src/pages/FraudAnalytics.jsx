@@ -1,7 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import { useApp } from '../context/AppContext';
 import { PieChart, Pie, Cell, ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid, RadialBarChart, RadialBar } from 'recharts';
-import { Flag, ShieldCheck, Info, Download, Eye, Lock } from 'lucide-react';
+import { Flag, ShieldCheck, Info, Download, Eye, Lock, ScanSearch } from 'lucide-react';
 import { getRiskLevel } from '../engine/fraudScoring';
 
 const CHART_TOOLTIP_STYLE = {
@@ -11,11 +11,13 @@ const CHART_TOOLTIP_STYLE = {
 const REJECTION_COLORS = {
     'ACCOUNT_INACTIVE': '#ff4757', 'AADHAAR_NOT_LINKED': '#ff6b6b', 'SCHEME_MISMATCH': '#f59e0b',
     'CLAIM_LIMIT_EXCEEDED': '#a855f7', 'FREQUENCY_VIOLATION': '#00b8d4', 'DUPLICATE_REJECTED': '#ff4757',
-    'INSUFFICIENT_BUDGET': '#64748b', 'CITIZEN_NOT_FOUND': '#94a3b8'
+    'INSUFFICIENT_BUDGET': '#64748b', 'CITIZEN_NOT_FOUND': '#94a3b8',
+    'IDENTITY_FROZEN': '#ef4444', 'BUDGET_REALLOCATION': '#f97316',
+    'CLAIM_LIMIT_MANUAL_REVIEW': '#8b5cf6',
 };
 
 export default function FraudAnalytics() {
-    const { stats, fraudAlerts, transactions, truncateHash, systemStatus } = useApp();
+    const { stats, fraudAlerts, transactions, truncateHash, systemStatus, fraudClusters } = useApp();
     const [viewMode, setViewMode] = useState('real-time');
 
     const rejectionData = useMemo(() =>
@@ -57,7 +59,7 @@ export default function FraudAnalytics() {
             </div>
 
             {/* Top Stats Row */}
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
                 <div className="glass-card p-5 flex flex-col items-center">
                     <h3 className="text-[10px] font-semibold text-text-muted uppercase tracking-wider mb-3 self-start">Global Risk Score</h3>
                     <div className="w-32 h-32 relative">
@@ -81,6 +83,19 @@ export default function FraudAnalytics() {
                     </div>
                     <p className="text-3xl font-black text-text-heading mb-1">{stats.fraudAlertCount.toLocaleString()}</p>
                     {stats.fraudAlertCount > 0 && <p className="text-xs text-accent-red">↑ {((stats.fraudAlertCount / Math.max(stats.totalTransactions, 1)) * 100).toFixed(1)}% of total</p>}
+                </div>
+                {/* Cluster summary card */}
+                <div className="glass-card p-5">
+                    <div className="flex items-center justify-between mb-2">
+                        <h3 className="text-[10px] font-semibold text-text-muted uppercase tracking-wider">Identity Rings</h3>
+                        <div className="p-1.5 rounded-md bg-accent-amber/10"><ScanSearch size={16} className="text-accent-amber" /></div>
+                    </div>
+                    <p className="text-3xl font-black text-text-heading mb-1">{stats.activeClusters || 0}</p>
+                    <div className="flex flex-col gap-1">
+                        {stats.highRiskClusters > 0 && <p className="text-xs text-accent-red">⚠ {stats.highRiskClusters} HIGH risk clusters</p>}
+                        {stats.frozenCount > 0 && <p className="text-xs text-accent-amber">❄ {stats.frozenCount} identities frozen</p>}
+                        <a href="/admin/clusters" className="text-[10px] text-accent-teal underline hover:opacity-80">View Cluster Report →</a>
+                    </div>
                 </div>
                 <div className="glass-card p-5">
                     <div className="flex items-center justify-between mb-2">

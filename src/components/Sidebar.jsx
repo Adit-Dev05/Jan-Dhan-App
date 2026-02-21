@@ -1,7 +1,7 @@
 import React from 'react';
 import { NavLink } from 'react-router-dom';
 import { useApp } from '../context/AppContext';
-import { LayoutDashboard, Activity, AlertTriangle, FileText, Settings, Shield } from 'lucide-react';
+import { LayoutDashboard, Activity, AlertTriangle, FileText, Settings, Shield, ScanSearch, TrendingDown } from 'lucide-react';
 
 const navItems = [
     { to: '/admin', icon: LayoutDashboard, label: 'Dashboard', end: true },
@@ -53,6 +53,31 @@ export default function Sidebar() {
                 ))}
 
                 <div className="my-3 border-t border-border-card" />
+                <p className="text-[9px] text-text-muted uppercase tracking-widest font-semibold px-3 mb-2">Fraud Controls</p>
+                <NavLink
+                    to="/admin/clusters"
+                    className={({ isActive }) =>
+                        `flex items-center gap-3 px-3 py-2.5 rounded-lg text-xs font-medium transition-all ${isActive
+                            ? 'bg-accent-red/10 text-accent-red border border-accent-red/20'
+                            : 'text-text-secondary hover:text-text-heading hover:bg-bg-card-hover'
+                        }`
+                    }
+                >
+                    <ScanSearch size={16} />
+                    Identity Clusters
+                </NavLink>
+                <NavLink
+                    to="/admin/budget"
+                    className={({ isActive }) =>
+                        `flex items-center gap-3 px-3 py-2.5 rounded-lg text-xs font-medium transition-all ${isActive
+                            ? 'bg-accent-amber/10 text-accent-amber border border-accent-amber/20'
+                            : 'text-text-secondary hover:text-text-heading hover:bg-bg-card-hover'
+                        }`
+                    }
+                >
+                    <TrendingDown size={16} />
+                    Budget Control
+                </NavLink>
 
                 <p className="text-[9px] text-text-muted uppercase tracking-widest font-semibold px-3 mb-2">Client Portal</p>
                 <a
